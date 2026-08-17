@@ -21,7 +21,7 @@ public class JwtUtils {
     private static final long EXPIRATION_TIME = 30L * 24 * 60 * 60 * 1000; // 30 days to millisec
     private SecretKey key;
 
-    @Value("${secreteJwtString}")
+    @Value("${secreteJwtString:food123456789app123456789food123456789app123456789}")
     private String secreteJwtString;
 
     @PostConstruct
