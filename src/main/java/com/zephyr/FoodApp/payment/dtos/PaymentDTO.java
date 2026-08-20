@@ -37,7 +37,7 @@ public class PaymentDTO {
 
     private LocalDateTime paymentDate;
 
-    private OrderDTO orders;
+    private OrderDTO order;
 
     private UserDTO user;
 }
