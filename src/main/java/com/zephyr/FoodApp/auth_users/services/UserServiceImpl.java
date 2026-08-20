@@ -4,7 +4,6 @@ import com.zephyr.FoodApp.auth_users.dtos.UserDTO;
 import com.zephyr.FoodApp.auth_users.entity.User;
 import com.zephyr.FoodApp.auth_users.repository.UserRepository;
 import com.zephyr.FoodApp.email_notification.dtos.NotificationDTO;
-import com.zephyr.FoodApp.email_notification.entity.Notification;
 import com.zephyr.FoodApp.email_notification.services.NotificationService;
 import com.zephyr.FoodApp.exceptions.BadRequestException;
 import com.zephyr.FoodApp.exceptions.NotFoundException;
@@ -20,7 +19,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.net.URL;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,7 +37,6 @@ public class UserServiceImpl implements UserService{
     private final PasswordEncoder passwordEncoder;
     private final ModelMapper modelMapper;
     private final NotificationService notificationService;
-//    private final AWSS3Service awss3Service;
 
     @Override
     public User getCurrentLoggedInUser() {
@@ -53,7 +56,7 @@ public class UserServiceImpl implements UserService{
 
         return Response.<List<UserDTO>>builder()
                 .statusCode(HttpStatus.OK.value())
-                .message("All users retreived successfully")
+                .message("All users retrieved successfully")
                 .data(userDTOS)
                 .build();
     }
@@ -86,18 +89,11 @@ public class UserServiceImpl implements UserService{
         MultipartFile imageFile = userDTO.getImageFile();
 
         // check if new imageFile was provided
-        if (imageFile != null && !imageFile.isEmpty()){
-            // delete old image in cloud if it exists
-            if (profileUrl != null && profileUrl.isEmpty()){
-                String keyName = profileUrl.substring(profileUrl.lastIndexOf("/") + 1);
-                awss3Service.deleteFile("profile/" + keyName);
-                log.info("Deleted old profile image from s3");
-            }
-
-            // upload new image
-            String imageName = UUID.randomUUID().toString() + "_" + imageFile.getOriginalFilename();
-            URL newImageUrl = awss3Service.uploadFile("profile/" + imageName, imageFile);
-            user.setProfileUrl(newImageUrl.toString());
+        if (imageFile != null && !imageFile.isEmpty()) {
+            String newProfileUrl = saveImageLocally(imageFile, profileUrl);
+            user.setProfileUrl(newProfileUrl);
+        } else if (userDTO.getProfileUrl() != null) {
+            user.setProfileUrl(userDTO.getProfileUrl());
         }
 
         // update user details
@@ -112,7 +108,6 @@ public class UserServiceImpl implements UserService{
             }
             user.setEmail(userDTO.getEmail());
         }
-        user.setEmail(userDTO.getEmail());
 
         // save the user
         userRepository.save(user);
@@ -121,8 +116,36 @@ public class UserServiceImpl implements UserService{
                 .statusCode(HttpStatus.OK.value())
                 .message("Account updated successfully")
                 .build();
+    }
 
-        return null;
+    private String saveImageLocally(MultipartFile file, String oldProfileUrl) {
+        if (oldProfileUrl != null && !oldProfileUrl.isEmpty()) {
+            try {
+                String cleanPath = oldProfileUrl.startsWith("/") ? oldProfileUrl.substring(1) : oldProfileUrl;
+                Path oldPath = Paths.get(cleanPath);
+                Files.deleteIfExists(oldPath);
+                log.info("Deleted old profile image: {}", oldProfileUrl);
+            } catch (Exception e) {
+                log.warn("Could not delete old profile image: {}", oldProfileUrl, e);
+            }
+        }
+
+        try {
+            String uploadDir = "uploads/profile/";
+            File dir = new File(uploadDir);
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+
+            String imageName = UUID.randomUUID().toString() + "_" + file.getOriginalFilename();
+            Path filePath = Paths.get(uploadDir + imageName);
+            Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+
+            return "/" + uploadDir + imageName;
+        } catch (IOException e) {
+            log.error("Failed to save image locally", e);
+            throw new BadRequestException("Failed to save profile image");
+        }
     }
 
     @Override
@@ -142,7 +165,7 @@ public class UserServiceImpl implements UserService{
         NotificationDTO notificationDTO = NotificationDTO.builder()
                 .recipient(user.getEmail())
                 .subject("Account Deactivated")
-                .body("Your account has been deactived. If this was mistake, please contact support.")
+                .body("Your account has been deactivated. If this was a mistake, please contact support.")
                 .build();
         notificationService.sendEmail(notificationDTO);
 
